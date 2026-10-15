@@ -72,6 +72,9 @@ export class LimitadorPeticiones implements OnApplicationShutdown {
     this.iniciarBarrido();
     const ahora = this.reloj.ahora().getTime();
     const instantes = vigentes(this.contadores.get(clave)?.instantes ?? [], ahora, ventanaMs);
+    // Se guarda ya normalizado: una petición anotada "en el futuro" (el reloj retrocedió) queda
+    // como hecha ahora, y así sale de la ventana a su tiempo
+    this.contadores.set(clave, { ventanaMs, instantes });
 
     // Cuántas peticiones tendrían que salir de la ventana para que quepan
     const sobran = instantes.length + cantidad - limite;

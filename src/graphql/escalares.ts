@@ -10,7 +10,9 @@ export function esFechaValida(valor: unknown): valor is string {
   const partes = FECHA.exec(valor);
   if (!partes) return false;
   const [anio, mes, dia] = [Number(partes[1]), Number(partes[2]), Number(partes[3])];
-  const fecha = new Date(Date.UTC(anio, mes - 1, dia));
+  // setUTCFullYear y no Date.UTC: este trata los años 0 a 99 como 1900 a 1999
+  const fecha = new Date(0);
+  fecha.setUTCFullYear(anio, mes - 1, dia);
   return (
     fecha.getUTCFullYear() === anio && fecha.getUTCMonth() === mes - 1 && fecha.getUTCDate() === dia
   );
