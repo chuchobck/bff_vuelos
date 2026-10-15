@@ -2,8 +2,14 @@ import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { Module } from '@nestjs/common';
 import { GraphQLModule } from '@nestjs/graphql';
 import { join } from 'node:path';
+import { Request, Response } from 'express';
 import { Configuracion, CONFIGURACION } from '../config/entorno';
+import { NucleoModule } from '../nucleo/nucleo.module';
+import { NUCLEO_VUELOS, NucleoVuelos } from '../nucleo/nucleo-vuelos';
+import { crearContexto } from './contexto';
 import { EscalarFecha, EscalarInstante } from './escalares';
+import { ConsultasResolver } from './resolvers/consultas.resolver';
+import { SegmentoResolver } from './resolvers/segmento.resolver';
 
 /** La ruta del endpoint GraphQL. */
 export const RUTA_GRAPHQL = '/graphql';
@@ -20,8 +26,9 @@ export const RUTA_GRAPHQL = '/graphql';
   imports: [
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
-      inject: [CONFIGURACION],
-      useFactory: (configuracion: Configuracion): ApolloDriverConfig => ({
+      imports: [NucleoModule],
+      inject: [CONFIGURACION, NUCLEO_VUELOS],
+      useFactory: (configuracion: Configuracion, nucleo: NucleoVuelos): ApolloDriverConfig => ({
         typePaths: [join(__dirname, 'schema.graphql')],
         path: RUTA_GRAPHQL,
         introspection: configuracion.introspeccion,
@@ -30,9 +37,12 @@ export const RUTA_GRAPHQL = '/graphql';
         includeStacktraceInErrorResponses: false,
         allowBatchedHttpRequests: false,
         csrfPrevention: true,
+        // Un contexto nuevo por petición: request id, huella, llamadas al core y DataLoader
+        context: ({ req, res }: { req: Request; res: Response }) =>
+          crearContexto(req, res, nucleo, configuracion),
       }),
     }),
   ],
-  providers: [EscalarFecha, EscalarInstante],
+  providers: [EscalarFecha, EscalarInstante, ConsultasResolver, SegmentoResolver],
 })
 export class GraphqlModule {}
