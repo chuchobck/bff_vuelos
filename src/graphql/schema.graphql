@@ -1,0 +1,254 @@
+# Quinde · BFF GraphQL de Vuelos.
+#
+# Las tres lecturas públicas del core (GDS Flight Core API v1.5.0.0), con los nombres y la forma de
+# su contrato en camelCase. Reglas (CLAUDE.md):
+#   - Dinero siempre String ("73.92"), nunca Float. Date es "YYYY-MM-DD"; DateTime, ISO 8601 UTC.
+#   - Lo que el contrato permite null es nullable; lo demás, no.
+#   - Enums sin prefijo. Un valor que el BFF no reconoce llega como null donde el contrato lo
+#     permite; donde no, es un error del core (INTERNAL_SERVER_ERROR).
+#   - Nunca se quita ni se renombra nada: se agrega, y lo que sobra se marca @deprecated.
+#     `npm run schema:breaking` lo comprueba contra main.
+
+"""
+Fecha local sin hora, "YYYY-MM-DD" (por ejemplo "2026-10-22"). Debe ser una fecha del calendario.
+"""
+scalar Date
+
+"""
+Instante en UTC, ISO 8601 con "Z" (por ejemplo "2026-10-22T12:30:00.000Z").
+"""
+scalar DateTime
+
+type Query {
+  """
+  Búsqueda de vuelos (POST /search del core): de uno a seis tramos, es decir solo ida, ida y vuelta
+  o multidestino. Exige la cabecera HTTP X-Device-Fingerprint (de 8 a 128 letras, dígitos o
+  . _ : + / = -); sin ella, BAD_USER_INPUT. Sin resultados: la lista vacía.
+  """
+  searchFlights(input: SearchInput!): SearchResult!
+
+  """
+  Mapa de asientos de un segmento de una oferta (GET /offers/{offerId}/seatmap del core). El
+  offerId vence con la oferta (NOT_FOUND). Para pedirlo junto con la búsqueda, usa
+  FlightSegment.seatMap.
+  """
+  seatMap(offerId: ID!, segmentId: ID!): SeatMap!
+
+  """
+  Estado operativo de un vuelo en su fecha local de salida (GET /flights/{flightNumber}/status
+  del core). El número de vuelo lleva la aerolínea comercializadora (2 letras) y el número sin
+  ceros a la izquierda: AV1500.
+  """
+  flightStatus(flightNumber: String!, date: Date!): FlightStatusDetail!
+}
+
+# --- Enums del contrato (sin el prefijo del proto) --------------------------------------------
+
+"Estado operativo de un vuelo."
+enum FlightStatus {
+  SCHEDULED
+  BOARDING
+  DEPARTED
+  DELAYED
+  ARRIVED
+  CANCELLED
+  DIVERTED
+}
+
+enum CabinClass {
+  ECONOMY
+  PREMIUM_ECONOMY
+  BUSINESS
+  FIRST
+}
+
+enum PassengerType {
+  ADULT
+  YOUTH
+  CHILD
+  INFANT
+}
+
+enum SeatCharacteristic {
+  WINDOW
+  AISLE
+  EXTRA_LEGROOM
+  EMERGENCY_EXIT
+}
+
+# --- searchFlights: entrada -------------------------------------------------------------------
+
+input SearchInput {
+  "De 1 a 6 tramos. Uno es solo ida; dos con los aeropuertos invertidos, ida y vuelta; hasta seis, multidestino."
+  itineraries: [SearchLegInput!]!
+  passengers: PassengerBreakdownInput!
+}
+
+input SearchLegInput {
+  "Código IATA del aeropuerto: 3 letras mayúsculas."
+  origin: String!
+  destination: String!
+  "Fecha local de salida en el aeropuerto de origen."
+  departureDate: Date!
+}
+
+"Un campo que no viene toma el valor por defecto del contrato: 1 adulto y 0 de los demás."
+input PassengerBreakdownInput {
+  adults: Int
+  youths: Int
+  children: Int
+  "No más que los adultos."
+  infants: Int
+}
+
+# --- searchFlights: salida (SearchResponse) ---------------------------------------------------
+
+type SearchResult {
+  totalOffers: Int!
+  offers: [FlightOffer!]!
+}
+
+"Una opción por tramo pedido, de una sola aerolínea."
+type FlightOffer {
+  "uuid; vence a los 30 minutos (SEARCH_OFFER_TTL_MINUTES del core)."
+  offerId: ID!
+  airline: Airline!
+  "En el orden de los tramos pedidos."
+  itineraries: [ItineraryOption!]!
+  "Todos los pasajeros con la familia más barata de cada itinerario."
+  grandTotal: MoneyAmount!
+}
+
+type Airline {
+  code: String!
+  name: String!
+}
+
+type ItineraryOption {
+  itineraryId: ID!
+  totalDurationMinutes: Int!
+  stopsCount: Int!
+  segments: [FlightSegment!]!
+  "De la más barata a la más cara."
+  pricingOptions: [CabinPricing!]!
+}
+
+"Una salida programada."
+type FlightSegment {
+  "uuid de la salida; es el segmentId de seatMap."
+  segmentId: ID!
+  flightNumber: String!
+  departure: FlightEndpoint!
+  arrival: FlightEndpoint!
+  "Espera desde el segmento anterior; null en el primero."
+  layoverMinutes: Int
+  marketingCarrier: String!
+  operatingCarrier: String!
+  aircraft: String
+  durationMinutes: Int
+  "null si no se conoce."
+  status: FlightStatus
+
+  """
+  Mapa de asientos de este segmento. Es perezoso: solo cuesta una llamada al core si la consulta
+  lo pide. Cada mapa cuenta contra CORE_MAX_LLAMADAS_POR_CONSULTA (QUERY_TOO_EXPENSIVE). Si el
+  mapa falla (oferta vencida, core caído...), este campo es null con su error y el resto responde.
+  """
+  seatMap: SeatMap
+}
+
+type FlightEndpoint {
+  iataCode: String!
+  "Instante en UTC."
+  at: DateTime!
+  terminal: String
+}
+
+"Una familia tarifaria con cupo en todos los segmentos del itinerario."
+type CabinPricing {
+  cabinClass: CabinClass!
+  fareBrand: String!
+  "El menor cupo disponible entre los segmentos."
+  availableSeats: Int!
+  fareRules: FareRules!
+  baggageAllowance: BaggageAllowance!
+  "Por maleta adicional en el itinerario."
+  extraCheckedBaggagePrice: MoneyAmount
+  "Solo los tipos de pasajero pedidos; el precio es de un pasajero de ese tipo."
+  pricePerPassengerType: [PassengerTypePrice!]!
+}
+
+type FareRules {
+  isRefundable: Boolean!
+  isChangeable: Boolean!
+}
+
+type BaggageAllowance {
+  personalItemIncluded: Boolean!
+  carryOnIncluded: Int!
+  checkedBaggageIncluded: Int!
+}
+
+type PassengerTypePrice {
+  passengerType: PassengerType!
+  price: MoneyAmount!
+}
+
+"Montos en texto decimal (\"73.92\"), nunca como número."
+type MoneyAmount {
+  "ISO 4217: 3 letras mayúsculas."
+  currency: String!
+  baseFare: String
+  "IVA y tasas aeroportuarias."
+  taxes: String
+  total: String!
+}
+
+# --- seatMap (SeatMapResponse) ----------------------------------------------------------------
+
+"Mapa básico de asientos, sin precios."
+type SeatMap {
+  segmentId: ID!
+  "En el orden de las filas."
+  cabins: [SeatMapCabin!]!
+}
+
+type SeatMapCabin {
+  cabinClass: CabinClass!
+  rows: [SeatRow!]!
+}
+
+type SeatRow {
+  rowNumber: Int!
+  seats: [Seat!]!
+}
+
+"Su número es la fila y la letra (12A)."
+type Seat {
+  seatNumber: String!
+  "false si una reserva ya lo tiene o si su cabina no se vende en esta salida."
+  isAvailable: Boolean!
+  characteristics: [SeatCharacteristic!]!
+}
+
+# --- flightStatus (FlightStatus del contrato) -------------------------------------------------
+
+type FlightStatusDetail {
+  flightNumber: String!
+  "Fecha local de salida."
+  date: Date!
+  marketingCarrier: String!
+  operatingCarrier: String!
+  departure: FlightStatusEndpoint!
+  arrival: FlightStatusEndpoint!
+  aircraft: String
+  status: FlightStatus!
+}
+
+type FlightStatusEndpoint {
+  iataCode: String!
+  terminal: String
+  scheduledAt: DateTime!
+  estimatedAt: DateTime
+  actualAt: DateTime
+}

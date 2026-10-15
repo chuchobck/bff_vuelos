@@ -1,5 +1,9 @@
 import { DynamicModule, Module } from '@nestjs/common';
 import { Configuracion, CONFIGURACION } from './config/entorno';
+import { GraphqlModule } from './graphql/graphql.module';
+import { LimitesModule } from './limites/limites.module';
+import { NucleoModule } from './nucleo/nucleo.module';
+import { SaludModule } from './salud/salud.module';
 
 /**
  * Raíz de la aplicación. Recibe la configuración ya validada (en `main.ts` sale de
@@ -11,6 +15,7 @@ export class AppModule {
     return {
       module: AppModule,
       global: true,
+      imports: [LimitesModule, NucleoModule, GraphqlModule, SaludModule],
       providers: [{ provide: CONFIGURACION, useValue: configuracion }],
       exports: [CONFIGURACION],
     };
