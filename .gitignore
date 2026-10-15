@@ -1,0 +1,24 @@
+# Compilado y dependencias
+/dist
+/node_modules
+*.tsbuildinfo
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# SO e IDE
+.DS_Store
+/.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Pruebas
+/coverage
+
+# Variables de entorno: solo .env.example va a git
+.env
+.env.*
+!.env.example

@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+dist
+coverage
+.env
+.env.*
+.git
+.gitignore
+.dockerignore
+.husky
+.github
+test
+*.md
