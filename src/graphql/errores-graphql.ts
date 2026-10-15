@@ -142,9 +142,13 @@ export function formatearError(
   if (original instanceof ErrorNucleo) {
     resultado = desdeNucleo(original, formateado);
   } else if (original instanceof GraphQLError) {
-    const code = String(formateado.extensions?.code ?? CODIGOS.INTERNAL_SERVER_ERROR);
-    const status =
-      (formateado.extensions?.status as number | undefined) ?? STATUS_GRAPHQL[code] ?? 500;
+    // Apollo envuelve el error de una regla de validación propia (QUERY_TOO_DEEP) en uno suyo,
+    // GRAPHQL_VALIDATION_FAILED: si la regla puso su código, ese es el que vale
+    const propio =
+      original.originalError instanceof GraphQLError ? original.originalError : undefined;
+    const extensiones = { ...formateado.extensions, ...propio?.extensions };
+    const code = String(extensiones.code ?? CODIGOS.INTERNAL_SERVER_ERROR);
+    const status = (extensiones.status as number | undefined) ?? STATUS_GRAPHQL[code] ?? 500;
     resultado = {
       ...formateado,
       extensions: {

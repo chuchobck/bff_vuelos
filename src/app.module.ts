@@ -1,6 +1,7 @@
 import { DynamicModule, Module } from '@nestjs/common';
 import { Configuracion, CONFIGURACION } from './config/entorno';
 import { GraphqlModule } from './graphql/graphql.module';
+import { LimitesModule } from './limites/limites.module';
 import { NucleoModule } from './nucleo/nucleo.module';
 
 /**
@@ -13,7 +14,7 @@ export class AppModule {
     return {
       module: AppModule,
       global: true,
-      imports: [NucleoModule, GraphqlModule],
+      imports: [LimitesModule, NucleoModule, GraphqlModule],
       providers: [{ provide: CONFIGURACION, useValue: configuracion }],
       exports: [CONFIGURACION],
     };

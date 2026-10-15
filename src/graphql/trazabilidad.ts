@@ -53,14 +53,20 @@ const logger = new Logger('Acceso');
  */
 export function middlewareAcceso(req: Request, res: Response, next: NextFunction): void {
   const inicio = process.hrtime.bigint();
-  res.once('close', () => {
+  let registrada = false;
+  // 'finish' llega cuando la respuesta salió; 'close' cubre al cliente que cortó antes
+  const registrar = () => {
+    if (registrada) return;
+    registrada = true;
     const ms = Number(process.hrtime.bigint() - inicio) / 1e6;
     const acceso = datosAccesoDe(res);
     logger.log(
       `${requestIdDe(res)} ${req.method} ${req.baseUrl} ${res.statusCode} ` +
         `op=${acceso.operationName ?? '-'} ${ms.toFixed(1)}ms core=${acceso.llamadasAlNucleo()}`,
     );
-  });
+  };
+  res.once('finish', registrar);
+  res.once('close', registrar);
   next();
 }
 
