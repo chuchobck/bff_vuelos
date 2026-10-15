@@ -8,6 +8,8 @@ import { NucleoModule } from '../nucleo/nucleo.module';
 import { NUCLEO_VUELOS, NucleoVuelos } from '../nucleo/nucleo-vuelos';
 import { crearContexto } from './contexto';
 import { EscalarFecha, EscalarInstante } from './escalares';
+import { formatearError } from './errores-graphql';
+import { PluginAcceso } from './plugin-acceso';
 import { ConsultasResolver } from './resolvers/consultas.resolver';
 import { SegmentoResolver } from './resolvers/segmento.resolver';
 
@@ -37,6 +39,8 @@ export const RUTA_GRAPHQL = '/graphql';
         includeStacktraceInErrorResponses: false,
         allowBatchedHttpRequests: false,
         csrfPrevention: true,
+        formatError: formatearError,
+        plugins: [new PluginAcceso()],
         // Un contexto nuevo por petición: request id, huella, llamadas al core y DataLoader
         context: ({ req, res }: { req: Request; res: Response }) =>
           crearContexto(req, res, nucleo, configuracion),

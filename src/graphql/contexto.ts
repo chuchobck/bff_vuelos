@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
 import { Configuracion } from '../config/entorno';
 import { esHuellaValida } from '../common/huella';
-import { resolverRequestId } from '../common/request-id';
 import { NucleoVuelos } from '../nucleo/nucleo-vuelos';
 import { ClienteNucleo } from './cliente-nucleo';
+import { datosAccesoDe, requestIdDe } from './trazabilidad';
 
 /**
  * El contexto de una petición GraphQL: se crea al llegar y no sobrevive a la respuesta. Nada
@@ -28,14 +28,11 @@ export function crearContexto(
   nucleo: NucleoVuelos,
   configuracion: Configuracion,
 ): ContextoGraphQL {
-  const requestId = resolverRequestId(req.headers['x-request-id']);
+  // El id lo fijó middlewareRequestId al entrar: es el mismo que va al core y a la respuesta
+  const requestId = requestIdDe(res);
   const cabecera = req.headers['x-device-fingerprint'];
   const huella = cabecera === undefined ? undefined : esHuellaValida(cabecera) ? cabecera : null;
-  return {
-    req,
-    res,
-    requestId,
-    huella,
-    nucleo: new ClienteNucleo(nucleo, configuracion, requestId, huella ?? undefined),
-  };
+  const cliente = new ClienteNucleo(nucleo, configuracion, requestId, huella ?? undefined);
+  datosAccesoDe(res).llamadasAlNucleo = () => cliente.totalLlamadas;
+  return { req, res, requestId, huella, nucleo: cliente };
 }
