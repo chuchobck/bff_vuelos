@@ -178,7 +178,7 @@ export function aErrorNucleo(error: ServiceError): ErrorNucleo {
     try {
       problema = leerProblemDetails(JSON.parse(binario.toString('utf8')));
     } catch {
-      problema = null; // un JSON roto no cambia nada: queda lo que dicen problem-code y -status
+      // Un JSON roto no cambia nada: queda lo que dicen problem-code y problem-status
     }
   }
 
