@@ -3,11 +3,18 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { validarEntorno } from './config/entorno';
+import { configurarApp } from './configurar-app';
 
 async function arrancar() {
   // Si falta una variable o es inválida, lanza con su nombre (nunca su valor) y no arranca
   const configuracion = validarEntorno(process.env);
-  const app = await NestFactory.create<NestExpressApplication>(AppModule.registrar(configuracion));
+  const app = await NestFactory.create<NestExpressApplication>(
+    AppModule.registrar(configuracion),
+    // El cuerpo lo lee el parser propio de /graphql (con tope de 100 kB), no el de Nest
+    { bodyParser: false },
+  );
+  configurarApp(app);
+  app.enableShutdownHooks();
   await app.listen(configuracion.puerto);
   new Logger('Arranque').log(
     `Escuchando en el puerto ${configuracion.puerto} (core por ${configuracion.transporte})`,
