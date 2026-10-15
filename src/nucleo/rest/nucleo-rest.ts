@@ -151,7 +151,13 @@ export function aErrorNucleo(respuesta: Response, cuerpo: string): ErrorNucleo {
 
 /** Sin respuesta: plazo vencido (AbortSignal.timeout) o conexión imposible. */
 function aErrorDeRed(error: unknown): ErrorNucleo {
-  const nombre = error instanceof Error ? error.name : '';
+  // Se lee `name` sin `instanceof Error`: el DOMException del plazo puede venir de otro realm
+  const nombre =
+    typeof error === 'object' &&
+    error !== null &&
+    typeof (error as { name?: unknown }).name === 'string'
+      ? (error as { name: string }).name
+      : '';
   if (nombre === 'TimeoutError' || nombre === 'AbortError') {
     return crearErrorNucleo('DEADLINE_EXCEEDED', null, { causa: 'plazo vencido' });
   }
