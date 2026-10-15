@@ -1,0 +1,109 @@
+# Integración continua: en cada push y pull request a main, lint, formato, compilación y pruebas
+# (no hace falta base de datos ni core: las pruebas levantan un core falso por gRPC y por REST).
+# Además: el proto copiado del core se compara con el de main del core (solo informa), y en los
+# pull requests el esquema GraphQL se compara con el de main (falla si rompe a los clientes).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    name: lint, build y pruebas
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Dependencias
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Formato
+        run: npm run format:check
+
+      - name: Compilación
+        run: npm run build
+
+      - name: Pruebas
+        run: npm test
+
+      # Arranca el BFF compilado como en producción (sin core al otro lado) y le pasa el smoke:
+      # comprueba el entorno validado, el esquema empaquetado y las protecciones que no necesitan core.
+      - name: Arranque y smoke
+        env:
+          NODE_ENV: production
+          PORT: '4000'
+          CORE_TRANSPORT: rest
+          CORE_REST_URL: http://127.0.0.1:9
+          TRUST_PROXY: '1'
+        run: |
+          node dist/main.js > bff.log 2>&1 &
+          BFF_PID=$!
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:4000/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+          status=0
+          bash scripts/smoke.sh http://127.0.0.1:4000 || status=$?
+          kill "$BFF_PID" 2>/dev/null || true
+          [ "$status" -eq 0 ] || { echo '--- bff.log'; cat bff.log; }
+          exit "$status"
+
+  proto:
+    name: proto del core (informativo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Informa si la copia de contracts/proto se quedó atrás del core; no bloquea
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Comparar con main del core
+        run: npm run proto:check
+
+  esquema:
+    name: compatibilidad del esquema GraphQL
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Dependencias
+        run: npm ci
+
+      # El clon de actions/checkout no trae main
+      - name: Esquema contra main
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          npm run schema:breaking -- FETCH_HEAD

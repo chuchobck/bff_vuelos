@@ -1,0 +1,30 @@
+# Blueprint de Render para el BFF (https://render.com/docs/blueprint-spec). Lo que cambia entre
+# entornos va con sync: false: Render lo pide al crear el servicio y nunca está en este archivo.
+# Guía paso a paso: docs/DEPLOY.md
+services:
+  - type: web
+    name: quinde-vuelos-bff
+    runtime: node
+    plan: free
+    # NODE_ENV=production también rige en el build y npm ci omitiría las devDependencies
+    # (@nestjs/cli, typescript): --include=dev las instala para compilar.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node dist/main
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NODE_ENV
+        value: production
+      # El core en Render no expone gRPC (solo el puerto HTTP): hasta la fase Azure, el BFF le
+      # habla por REST. Con gRPC: CORE_TRANSPORT=grpc y CORE_GRPC_URL=<host>:50051
+      - key: CORE_TRANSPORT
+        value: rest
+      - key: CORE_REST_URL
+        value: https://quinde-vuelos-api.onrender.com
+      # Render pone un proxy delante: con 1 la IP del cliente sale de X-Forwarded-For
+      - key: TRUST_PROXY
+        value: '1'
+      # Orígenes del marketplace separados por coma (https://app.example.com), o vacía
+      - key: CORS_ORIGINS
+        sync: false
