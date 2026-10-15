@@ -22,6 +22,11 @@ export default tseslint.config(
     },
   },
   {
+    // Las pruebas leen JSON de respuestas con `any`: no se avisa en test/
+    files: ['test/**/*.ts'],
+    rules: { '@typescript-eslint/no-explicit-any': 'off' },
+  },
+  {
     // Herramientas de verificación (scripts/): CommonJS que informa por consola.
     files: ['scripts/**/*.cjs'],
     languageOptions: { sourceType: 'commonjs' },
