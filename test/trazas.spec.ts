@@ -55,8 +55,8 @@ describe('span SERVER, X-Trace-Id y logs', () => {
     const r = await consultar(app.servidor, Q_ESTADO);
 
     expect(r.headers['x-trace-id']).toMatch(/^[0-9a-f]{32}$/);
-    const spans = await recolector.esperarTraza(r.headers['x-trace-id']!, 1);
-    expect(spans[0]!.parentSpanId).toBe('');
+    const spans = await recolector.esperarTraza(r.headers['x-trace-id']!, 2);
+    expect(spans.find((s) => s.tipo === SERVER)!.parentSpanId).toBe('');
   });
 
   it.each([

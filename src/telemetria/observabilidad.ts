@@ -3,6 +3,7 @@ import { AddressInfo } from 'node:net';
 import { Configuracion } from '../config/entorno';
 import { Metricas, servidorMetricas } from '../observabilidad/metricas';
 import { Trazas } from '../observabilidad/trazas';
+import { MetricasBff } from './metricas-bff';
 
 /** Token de inyección de Nest. */
 export const OBSERVABILIDAD = Symbol('OBSERVABILIDAD');
@@ -14,6 +15,7 @@ export const OBSERVABILIDAD = Symbol('OBSERVABILIDAD');
 export class Observabilidad {
   readonly trazas: Trazas;
   readonly metricas: Metricas;
+  readonly bff: MetricasBff;
   private servidor?: Server;
 
   constructor(
@@ -35,6 +37,7 @@ export class Observabilidad {
       version: config.version,
       entorno,
     });
+    this.bff = new MetricasBff(this.metricas.registro);
   }
 
   /**

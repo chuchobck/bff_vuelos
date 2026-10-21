@@ -58,6 +58,7 @@ export function middlewareObservabilidad(obs: Observabilidad) {
         span,
         contexto: trace.setSpan(padre, span).setValue(CLAVE_REQUEST_ID, requestId),
         inicio: process.hrtime.bigint(),
+        bff: obs.bff,
         // El tracestate es de la traza del gateway: solo se reenvía si se continuó esa traza
         tracestate: trace.getSpanContext(padre)
           ? tracestateAcotado(req.headers.tracestate)
