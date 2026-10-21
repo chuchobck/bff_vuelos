@@ -1,10 +1,11 @@
-import { LogLevel } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { Server } from 'node:http';
 import { AppModule } from '../../src/app.module';
 import { Configuracion, validarEntorno } from '../../src/config/entorno';
 import { configurarApp } from '../../src/configurar-app';
+import { LoggerJson } from '../../src/telemetria/logger-json';
+import { Observabilidad } from '../../src/telemetria/observabilidad';
 import { CoreFalso } from './core-falso';
 
 /** Una configuración de pruebas apuntando al core falso, con ajustes encima. */
@@ -27,22 +28,38 @@ export interface AppDePrueba {
   app: NestExpressApplication;
   servidor: Server;
   configuracion: Configuracion;
-  /** Las líneas que escribió el logger de Nest (nivel, contexto y mensaje). */
+  /** Las líneas JSON que escribió el logger de la app (nivel, contexto, mensaje, requestId, traceId...). */
   logs: string[];
+  /** Esas mismas líneas ya leídas. */
+  registros(): Record<string, any>[];
+  observabilidad: Observabilidad;
+  /** Base de `/metrics` (el puerto aparte): `http://127.0.0.1:<puerto>`. */
+  urlMetricas: string;
   cerrar(): Promise<void>;
 }
 
 export interface OpcionesApp {
   core: CoreFalso;
   configuracion?: Partial<Configuracion>;
+  /** Base OTLP/HTTP de un recolector falso: sin ella, no se exporta (igual hay trace-id y propagación). */
+  otlp?: string;
   /** Para cambiar un provider (el Reloj, por ejemplo). */
   sobrescribir?: { proveedor: unknown; valor: unknown }[];
 }
 
 /** Levanta el BFF de verdad (configurarApp incluido) sobre un puerto libre, con el logger capturado. */
 export async function crearApp(opciones: OpcionesApp): Promise<AppDePrueba> {
-  const configuracion = configuracionDePrueba(opciones.core, opciones.configuracion);
-  let constructor = Test.createTestingModule({ imports: [AppModule.registrar(configuracion)] });
+  const base = configuracionDePrueba(opciones.core, opciones.configuracion);
+  const configuracion: Configuracion = opciones.otlp
+    ? { ...base, observabilidad: { ...base.observabilidad, endpointOtlp: opciones.otlp } }
+    : base;
+  // Los lotes de spans salen cada 50 ms para que las pruebas no esperen los 2 s de producción
+  const observabilidad = new Observabilidad(configuracion.observabilidad, configuracion.entorno, {
+    esperaLoteMs: 50,
+  });
+  let constructor = Test.createTestingModule({
+    imports: [AppModule.registrar(configuracion, observabilidad)],
+  });
   for (const { proveedor, valor } of opciones.sobrescribir ?? []) {
     constructor = constructor.overrideProvider(proveedor).useValue(valor);
   }
@@ -50,26 +67,20 @@ export async function crearApp(opciones: OpcionesApp): Promise<AppDePrueba> {
   const app = modulo.createNestApplication<NestExpressApplication>({ bodyParser: false });
 
   const logs: string[] = [];
-  const registrar = (nivel: LogLevel) => (mensaje: unknown, contexto?: string) =>
-    void logs.push(
-      `${nivel} [${contexto ?? ''}] ${typeof mensaje === 'string' ? mensaje : JSON.stringify(mensaje)}`,
-    );
-  app.useLogger({
-    log: registrar('log'),
-    error: registrar('error'),
-    warn: registrar('warn'),
-    debug: registrar('debug'),
-    verbose: registrar('verbose'),
-  });
+  app.useLogger(new LoggerJson((linea) => void logs.push(linea)));
 
   configurarApp(app);
   await app.init();
   await app.listen(0, '127.0.0.1');
+  const puertoMetricas = await observabilidad.escuchar(0);
   return {
     app,
     servidor: app.getHttpServer() as Server,
     configuracion,
     logs,
+    registros: () => logs.map((l) => JSON.parse(l)),
+    observabilidad,
+    urlMetricas: `http://127.0.0.1:${puertoMetricas}`,
     cerrar: () => app.close(),
   };
 }

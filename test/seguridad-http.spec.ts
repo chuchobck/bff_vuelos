@@ -251,14 +251,16 @@ describe('seguridad HTTP del BFF', () => {
       expect(r.headers['access-control-allow-credentials']).toBeUndefined();
     });
 
-    it('la respuesta expone x-request-id y retry-after al navegador', async () => {
+    it('la respuesta expone x-request-id, x-trace-id y retry-after al navegador', async () => {
       const r = await request(app.servidor)
         .post('/graphql')
         .set({ origin: ORIGEN, 'content-type': 'application/json' })
         .send({ query: '{ __typename }' });
 
       expect(r.headers['access-control-allow-origin']).toBe(ORIGEN);
-      expect(r.headers['access-control-expose-headers']).toBe('x-request-id,retry-after');
+      expect(r.headers['access-control-expose-headers']).toBe(
+        'x-request-id,x-trace-id,retry-after',
+      );
     });
 
     it('un origen no permitido no recibe cabeceras CORS', async () => {
@@ -340,11 +342,21 @@ describe('seguridad HTTP del BFF', () => {
       });
       expect(r.body.errors).toBeUndefined();
 
-      const lineas = app.logs.filter((l) => l.includes('[Acceso]'));
+      const lineas = app.registros().filter((l) => l.context === 'Acceso');
       expect(lineas).toHaveLength(1);
-      expect(lineas[0]).toMatch(
-        /^log \[Acceso\] traza-de-acceso-001 POST \/graphql 200 op=BuscarVuelos \d+\.\d+ms core=1$/,
-      );
+      expect(lineas[0]).toMatchObject({
+        level: 'info',
+        msg: 'acceso',
+        requestId: 'traza-de-acceso-001',
+        traceId: r.headers['x-trace-id'],
+        metodo: 'POST',
+        ruta: '/graphql',
+        status: 200,
+        op: 'BuscarVuelos',
+        llamadasAlNucleo: 1,
+      });
+      expect(lineas[0].spanId).toMatch(/^[0-9a-f]{16}$/);
+      expect(lineas[0].ms).toEqual(expect.any(Number));
     });
 
     it('la huella, los argumentos y los datos de la petición no salen en ningún log', async () => {
@@ -383,7 +395,7 @@ describe('seguridad HTTP del BFF', () => {
       expect(todo).not.toContain('ZZ9999');
       expect(todo).not.toContain('UIO');
       expect(todo).not.toContain(OFFER_ID);
-      expect(app.logs.filter((l) => l.includes('[Acceso]')).length).toBe(5);
+      expect(app.registros().filter((l) => l.context === 'Acceso')).toHaveLength(5);
     });
 
     it('un operationName con saltos de línea no puede falsear una línea de log', async () => {
@@ -394,11 +406,11 @@ describe('seguridad HTTP del BFF', () => {
         .set('content-type', 'application/json')
         .send({ query: '{ __typename }', operationName: 'Falso\nlog [Acceso] x-falso-001 200' });
 
-      const lineas = app.logs.filter((l) => l.includes('[Acceso]'));
+      // Una sola línea JSON: un salto de línea en el nombre no puede partirla ni falsear otra
+      const lineas = app.logs.filter((l) => l.includes('"context":"Acceso"'));
       expect(lineas).toHaveLength(1);
-      expect(lineas[0]).toContain('op=-');
+      expect(JSON.parse(lineas[0]!)).toMatchObject({ op: '-', status: 400 });
       expect(lineas[0]).not.toContain('Falso');
-      expect(lineas[0]).not.toContain('\n');
     });
 
     it('una petición rechazada (cuerpo grande) también deja su línea de acceso', async () => {
@@ -409,9 +421,12 @@ describe('seguridad HTTP del BFF', () => {
         .set('content-type', 'application/json')
         .send(JSON.stringify({ query: '{ __typename }', relleno: 'x'.repeat(101 * 1024) }));
 
-      const lineas = app.logs.filter((l) => l.includes('[Acceso]'));
+      const lineas = app.registros().filter((l) => l.context === 'Acceso');
       expect(lineas).toHaveLength(1);
-      expect(lineas[0]).toContain(' 413 ');
+      expect(lineas[0]).toMatchObject({
+        status: 413,
+        traceId: expect.stringMatching(/^[0-9a-f]{32}$/),
+      });
     });
   });
 });
