@@ -1,6 +1,6 @@
 {
   "name": "quinde-vuelos-bff",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Quinde · BFF GraphQL de Vuelos: agrega las tres lecturas públicas del core (búsqueda, mapa de asientos y estado de vuelo) sobre gRPC, con REST de respaldo",
   "private": true,
   "license": "UNLICENSED",

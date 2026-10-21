@@ -180,6 +180,31 @@ scripts/smoke.sh http://localhost:4000      # con el core arriba: incluye NOT_FO
 npm test                                    # 300+ pruebas con el core falso (no necesitan nada más)
 ```
 
+## 7. Trazas y métricas con el gateway
+
+El BFF sigue el estándar de observabilidad del gateway (ver [GRAPHQL.md](GRAPHQL.md#observabilidad)). Para ver
+una traza completa, con el gateway (`main`) delante y el core con `GRPC_ENABLED=true`:
+
+```bash
+# un recolector OTLP falso (el del gateway: sirve cuando no hay Jaeger) y los servicios exportando a él
+RECOLECTOR_PORT=4318 RECOLECTOR_ARCHIVO=/tmp/spans.jsonl node ../gateway_vuelos/scripts/e2e/recolector-otlp.mjs &
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 METRICS_PORT=9465 \
+  NODE_ENV=development CORE_TRANSPORT=grpc CORE_GRPC_URL=localhost:50051 PORT=4000 node dist/main.js
+# el gateway: UPSTREAM_BFF_URL=http://localhost:4000 UPSTREAM_CORE_URL=http://localhost:3000 \
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 METRICS_PORT=9464 node dist/main.js
+
+# una búsqueda con mapa de asientos, solo por el gateway (8080); el trace-id viene en X-Trace-Id
+curl -si localhost:8080/graphql -H 'content-type: application/json' -H 'x-device-fingerprint: verificacion-0001' \
+  -d '{"query":"{ searchFlights(input: { itineraries: [{ origin: \"UIO\", destination: \"GYE\", departureDate: \"'"$FECHA"'\" }], passengers: { adults: 1 } }) { offers { itineraries { segments { seatMap { cabins { cabinClass } } } } } } }"}' \
+  | grep -i x-trace-id
+node scripts/arbol-traza.mjs /tmp/spans.jsonl <trace-id>
+curl -s localhost:9465/metrics | grep -E '^(graphql_|bff_core|http_client)'
+```
+
+**Esperado:** una sola traza con el SERVER y el CLIENT del gateway, el SERVER del BFF (hijo del CLIENT del gateway),
+el INTERNAL `graphql query searchFlights` y, debajo, un CLIENT `SearchFlights` más uno `GetSeatMap` por oferta.
+`/metrics` da 404 en el 4000 y en el 8080. El span del core aparecerá cuando termine la fase 7c.
+
 ## Qué no cubre esta guía
 
 El plazo vencido (`GATEWAY_TIMEOUT`) y el 429 del core no se reproducen con el core real sin
