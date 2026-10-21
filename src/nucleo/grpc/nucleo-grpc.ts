@@ -8,7 +8,7 @@ import {
   Client,
 } from '@grpc/grpc-js';
 import { loadSync } from '@grpc/proto-loader';
-import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, OnModuleDestroy, Optional } from '@nestjs/common';
 import { Configuracion, CONFIGURACION } from '../../config/entorno';
 import {
   CategoriaError,
@@ -18,6 +18,8 @@ import {
   leerRetryAfter,
 } from '../error-nucleo';
 import { EntradaBusqueda, EstadoVueloDetalle, MapaAsientos, ResultadoBusqueda } from '../modelo';
+import { LlamadaCore, RpcDelCore } from '../../telemetria/llamada-core';
+import { Observabilidad, OBSERVABILIDAD } from '../../telemetria/observabilidad';
 import { NORMALIZADOR_GRPC } from '../normalizacion';
 import { ContextoLlamada, NucleoVuelos, SondaNucleo } from '../nucleo-vuelos';
 import { OPCIONES_CARGA_PROTO, PAQUETE_GRPC, RUTA_PROTO, SERVICIO_GRPC } from './proto';
@@ -30,6 +32,8 @@ const METADATA = {
   problemaStatus: 'problem-status',
   problemaDetalle: 'problem-details-bin',
   retryAfter: 'retry-after',
+  traceparent: 'traceparent',
+  tracestate: 'tracestate',
 } as const;
 
 /** Cuánto espera /health/ready a que el canal esté READY. */
@@ -56,7 +60,10 @@ interface ClienteFlights extends Client {
 export class NucleoGrpc implements NucleoVuelos, SondaNucleo, OnModuleDestroy {
   private readonly cliente: ClienteFlights;
 
-  constructor(@Inject(CONFIGURACION) private readonly configuracion: Configuracion) {
+  constructor(
+    @Inject(CONFIGURACION) private readonly configuracion: Configuracion,
+    @Optional() @Inject(OBSERVABILIDAD) private readonly observabilidad?: Observabilidad,
+  ) {
     const definicion = loadSync(RUTA_PROTO, OPCIONES_CARGA_PROTO);
     const paquete = PAQUETE_GRPC.split('.').reduce<Record<string, unknown>>(
       (nivel, nombre) => nivel[nombre] as Record<string, unknown>,
@@ -78,6 +85,8 @@ export class NucleoGrpc implements NucleoVuelos, SondaNucleo, OnModuleDestroy {
     if (contexto.huella !== undefined) metadata.set(METADATA.huella, contexto.huella);
     const crudo = await this.llamar(
       this.cliente.SearchFlights,
+      'SearchFlights',
+      contexto,
       {
         itineraries: entrada.itineraries,
         passengers: sinNulos(entrada.passengers),
@@ -94,6 +103,8 @@ export class NucleoGrpc implements NucleoVuelos, SondaNucleo, OnModuleDestroy {
   ): Promise<MapaAsientos> {
     const crudo = await this.llamar(
       this.cliente.GetSeatMap,
+      'GetSeatMap',
+      contexto,
       { offerId, segmentId },
       this.metadata(contexto),
     );
@@ -107,6 +118,8 @@ export class NucleoGrpc implements NucleoVuelos, SondaNucleo, OnModuleDestroy {
   ): Promise<EstadoVueloDetalle> {
     const crudo = await this.llamar(
       this.cliente.GetFlightStatus,
+      'GetFlightStatus',
+      contexto,
       { flightNumber, date },
       this.metadata(contexto),
     );
@@ -131,11 +144,29 @@ export class NucleoGrpc implements NucleoVuelos, SondaNucleo, OnModuleDestroy {
     return metadata;
   }
 
-  private llamar(metodo: Llamada<unknown>, peticion: object, metadata: Metadata): Promise<unknown> {
+  private llamar(
+    metodo: Llamada<unknown>,
+    rpc: RpcDelCore,
+    contexto: ContextoLlamada,
+    peticion: object,
+    metadata: Metadata,
+  ): Promise<unknown> {
+    // Un span CLIENT por llamada real, y un traceparent NUEVO (mismo trace-id, parent = ese span)
+    // junto al x-request-id: el core lo continúa, o lo ignora si aún no lo lee
+    const llamada = LlamadaCore.abrir(
+      this.observabilidad,
+      'grpc',
+      rpc,
+      contexto.traza,
+      contexto.requestId,
+    );
+    if (llamada.traceparent) metadata.set(METADATA.traceparent, llamada.traceparent);
+    if (llamada.tracestate) metadata.set(METADATA.tracestate, llamada.tracestate);
     return new Promise((resolver, rechazar) => {
       // El plazo corre desde que se hace la llamada: CORE_TIMEOUT_MS en cada una
       const deadline = Date.now() + this.configuracion.timeoutMs;
       metodo.call(this.cliente, peticion, metadata, { deadline }, (error, respuesta) => {
+        llamada.terminar(error ? error.code : EstadoGrpc.OK);
         if (error) rechazar(aErrorNucleo(error));
         else resolver(respuesta);
       });

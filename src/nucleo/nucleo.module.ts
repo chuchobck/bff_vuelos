@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { Configuracion, CONFIGURACION } from '../config/entorno';
+import { Observabilidad, OBSERVABILIDAD } from '../telemetria/observabilidad';
 import { NucleoGrpc } from './grpc/nucleo-grpc';
 import { NUCLEO_VUELOS, SONDA_NUCLEO } from './nucleo-vuelos';
 import { NucleoRest } from './rest/nucleo-rest';
@@ -12,11 +13,11 @@ import { NucleoRest } from './rest/nucleo-rest';
   providers: [
     {
       provide: NUCLEO_VUELOS,
-      inject: [CONFIGURACION],
-      useFactory: (configuracion: Configuracion) =>
+      inject: [CONFIGURACION, OBSERVABILIDAD],
+      useFactory: (configuracion: Configuracion, observabilidad: Observabilidad) =>
         configuracion.transporte === 'grpc'
-          ? new NucleoGrpc(configuracion)
-          : new NucleoRest(configuracion),
+          ? new NucleoGrpc(configuracion, observabilidad)
+          : new NucleoRest(configuracion, observabilidad),
     },
     { provide: SONDA_NUCLEO, useExisting: NUCLEO_VUELOS },
   ],

@@ -1,3 +1,4 @@
+import type { TrazaDeLlamada } from '../telemetria/llamada-core';
 import { EntradaBusqueda, EstadoVueloDetalle, MapaAsientos, ResultadoBusqueda } from './modelo';
 
 /** Lo que acompaña a cada llamada al core. */
@@ -8,6 +9,11 @@ export interface ContextoLlamada {
    * Solo la búsqueda la manda (x-device-fingerprint / X-Device-Fingerprint). Nunca se registra.
    */
   huella?: string;
+  /**
+   * De qué operación GraphQL cuelga la llamada (span CLIENT) y el tracestate del gateway. Sin esto
+   * el span cuelga del contexto activo.
+   */
+  traza?: TrazaDeLlamada;
 }
 
 /**

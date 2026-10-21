@@ -46,6 +46,9 @@ export interface LlamadaRegistrada {
   /** x-request-id (metadata) o X-Request-Id (cabecera). */
   requestId?: string;
   huella?: string;
+  /** traceparent y tracestate que llegaron (metadata en gRPC, cabecera en REST). */
+  traceparent?: string;
+  tracestate?: string;
   /** Lo que pidió el BFF, en la forma del contrato (JSON de REST / mensaje de gRPC). */
   peticion: Record<string, unknown>;
   /** Milisegundos de plazo que traía la llamada (deadline de gRPC). Solo gRPC. */
@@ -172,6 +175,8 @@ async function crearCoreGrpc(): Promise<CoreFalso> {
         operacion,
         requestId: llamada.metadata.get('x-request-id')[0] as string | undefined,
         huella: llamada.metadata.get('x-device-fingerprint')[0] as string | undefined,
+        traceparent: llamada.metadata.get('traceparent')[0] as string | undefined,
+        tracestate: llamada.metadata.get('tracestate')[0] as string | undefined,
         peticion: llamada.request,
         plazoMs,
       });
@@ -270,6 +275,8 @@ async function crearCoreRest(): Promise<CoreFalso> {
       operacion,
       requestId: req.headers['x-request-id'] as string | undefined,
       huella: req.headers['x-device-fingerprint'] as string | undefined,
+      traceparent: req.headers.traceparent as string | undefined,
+      tracestate: req.headers.tracestate as string | undefined,
       peticion,
     });
     const respuesta = respuestas.get(operacion) ?? { tipo: 'ok' as const };

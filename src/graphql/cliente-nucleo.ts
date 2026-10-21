@@ -7,6 +7,7 @@ import {
   ResultadoBusqueda,
 } from '../nucleo/modelo';
 import { NucleoVuelos } from '../nucleo/nucleo-vuelos';
+import { TrazaDeLlamada } from '../telemetria/llamada-core';
 import { errorConsultaCostosa } from './errores';
 
 export interface ClaveMapa {
@@ -31,6 +32,8 @@ export class ClienteNucleo {
     private readonly configuracion: Pick<Configuracion, 'maxLlamadasPorConsulta'>,
     private readonly requestId: string,
     private readonly huella: string | undefined,
+    /** De qué operación cuelga cada llamada al core; se evalúa al llamar, no al construir. */
+    private readonly traza: () => TrazaDeLlamada | undefined = () => undefined,
   ) {
     this.cargadorMapas = new DataLoader<ClaveMapa, MapaAsientos, string>(
       // Cada clave se resuelve (o falla) sola: un mapa que falla no tumba a los demás
@@ -40,6 +43,7 @@ export class ClienteNucleo {
             this.contar(() =>
               this.nucleo.mapaAsientos(clave.offerId, clave.segmentId, {
                 requestId: this.requestId,
+                traza: this.traza(),
               }),
             ).catch((error: unknown) =>
               error instanceof Error ? error : new Error('Unknown error'),
@@ -57,7 +61,11 @@ export class ClienteNucleo {
 
   buscarVuelos(entrada: EntradaBusqueda): Promise<ResultadoBusqueda> {
     return this.contar(() =>
-      this.nucleo.buscarVuelos(entrada, { requestId: this.requestId, huella: this.huella }),
+      this.nucleo.buscarVuelos(entrada, {
+        requestId: this.requestId,
+        huella: this.huella,
+        traza: this.traza(),
+      }),
     );
   }
 
@@ -67,7 +75,10 @@ export class ClienteNucleo {
 
   estadoVuelo(flightNumber: string, date: string): Promise<EstadoVueloDetalle> {
     return this.contar(() =>
-      this.nucleo.estadoVuelo(flightNumber, date, { requestId: this.requestId }),
+      this.nucleo.estadoVuelo(flightNumber, date, {
+        requestId: this.requestId,
+        traza: this.traza(),
+      }),
     );
   }
 
