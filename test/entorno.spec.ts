@@ -123,6 +123,93 @@ describe('validación del entorno al arrancar', () => {
     });
   });
 
+  describe('observabilidad', () => {
+    it('valores por defecto: quinde-bff, sin exportador, confía en el gateway, métricas en 9464', () => {
+      const c = validarEntorno(BASE);
+
+      expect(c.observabilidad).toMatchObject({
+        servicio: 'quinde-bff',
+        endpointOtlp: undefined,
+        muestreo: 1,
+        confiarEntrante: true,
+        puertoMetricas: 9464,
+      });
+      expect(c.observabilidad.version).toMatch(/^\d+\.\d+\.\d+/);
+    });
+
+    it('el muestreo por defecto es 0.1 en production y 1 fuera de ella', () => {
+      expect(validarEntorno({ ...BASE, NODE_ENV: 'production' }).observabilidad.muestreo).toBe(0.1);
+      expect(validarEntorno({ ...BASE, NODE_ENV: 'development' }).observabilidad.muestreo).toBe(1);
+      expect(
+        validarEntorno({ ...BASE, NODE_ENV: 'production', OTEL_TRACES_SAMPLER_ARG: '0.5' })
+          .observabilidad.muestreo,
+      ).toBe(0.5);
+      expect(
+        validarEntorno({ ...BASE, OTEL_TRACES_SAMPLER_ARG: '0' }).observabilidad.muestreo,
+      ).toBe(0);
+    });
+
+    it('lee las variables y quita la barra final del endpoint', () => {
+      const c = validarEntorno({
+        ...BASE,
+        OTEL_SERVICE_NAME: 'quinde-bff-2',
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'http://jaeger:4318/',
+        TRACE_TRUST_INCOMING: 'false',
+        METRICS_PORT: '9465',
+      });
+      expect(c.observabilidad).toMatchObject({
+        servicio: 'quinde-bff-2',
+        endpointOtlp: 'http://jaeger:4318',
+        confiarEntrante: false,
+        puertoMetricas: 9465,
+      });
+    });
+
+    it('una variable vacía (como en .env.example) es una variable sin definir', () => {
+      const c = validarEntorno({
+        ...BASE,
+        OTEL_EXPORTER_OTLP_ENDPOINT: '',
+        OTEL_TRACES_SAMPLER_ARG: '',
+        METRICS_PORT: '',
+      });
+      expect(c.observabilidad).toMatchObject({
+        endpointOtlp: undefined,
+        muestreo: 1,
+        puertoMetricas: 9464,
+      });
+    });
+
+    it('METRICS_PORT=0 apaga el puerto de métricas', () => {
+      expect(validarEntorno({ ...BASE, METRICS_PORT: '0' }).observabilidad.puertoMetricas).toBe(0);
+    });
+
+    it.each([
+      ['OTEL_SERVICE_NAME', 'nombre con espacios'],
+      ['OTEL_EXPORTER_OTLP_ENDPOINT', 'ftp://jaeger:4318'],
+      ['OTEL_EXPORTER_OTLP_ENDPOINT', 'http://usuario:clave-secreta@jaeger:4318'],
+      ['OTEL_EXPORTER_OTLP_ENDPOINT', 'http://jaeger:4318?token=secreto-123'],
+      ['OTEL_EXPORTER_OTLP_ENDPOINT', 'no-es-una-url'],
+      ['OTEL_TRACES_SAMPLER_ARG', '1.5'],
+      ['OTEL_TRACES_SAMPLER_ARG', '-0.1'],
+      ['OTEL_TRACES_SAMPLER_ARG', 'mucho'],
+      ['TRACE_TRUST_INCOMING', 'quizas'],
+      ['METRICS_PORT', '70000'],
+      ['METRICS_PORT', '-1'],
+      ['METRICS_PORT', 'abc'],
+    ])('%s=%s no arranca y no repite el valor', (variable, valor) => {
+      const mensaje = mensajeDe({ ...BASE, [variable]: valor });
+
+      expect(mensaje).toContain(variable);
+      if (valor.length > 6) expect(mensaje).not.toContain(valor);
+      expect(mensaje).not.toMatch(/clave-secreta|secreto-123/);
+    });
+
+    it('METRICS_PORT igual a PORT no arranca (el /metrics saldría por el puerto público)', () => {
+      expect(mensajeDe({ ...BASE, PORT: '4000', METRICS_PORT: '4000' })).toMatch(/METRICS_PORT/);
+      expect(() => validarEntorno({ ...BASE, PORT: '4000', METRICS_PORT: '0' })).not.toThrow();
+    });
+  });
+
   describe('valores válidos', () => {
     it('acepta los extremos de CORE_TIMEOUT_MS (500 y 60000)', () => {
       expect(validarEntorno({ ...BASE, CORE_TIMEOUT_MS: '500' }).timeoutMs).toBe(500);

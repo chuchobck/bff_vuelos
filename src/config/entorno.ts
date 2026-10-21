@@ -1,8 +1,11 @@
 import 'reflect-metadata';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { plainToInstance } from 'class-transformer';
 import {
   IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Matches,
@@ -32,6 +35,11 @@ export const LIMITE_GLOBAL_POR_DEFECTO = 100;
 export const LIMITE_BUSQUEDA_POR_DEFECTO = 20;
 export const LIMITE_MAPA_ASIENTOS_POR_DEFECTO = 60;
 export const LIMITE_ESTADO_VUELO_POR_DEFECTO = 60;
+// Observabilidad (docs/OBSERVABILIDAD.md del gateway): identidad y puertos del estándar
+export const SERVICIO_POR_DEFECTO = 'quinde-bff';
+export const PUERTO_METRICAS_POR_DEFECTO = 9464;
+export const MUESTREO_DESARROLLO = 1;
+export const MUESTREO_PRODUCCION = 0.1;
 
 /** Los mensajes de validación nombran la variable, nunca su valor (puede ser una URL con clave). */
 @ValidatorConstraint({ name: 'listaDeOrigenes' })
@@ -90,6 +98,37 @@ class UrlRestValida implements ValidatorConstraintInterface {
     return (
       'CORE_REST_URL debe ser el origen del core, como https://quinde-vuelos-api.onrender.com ' +
       '(http o https, sin usuario, ruta ni query)'
+    );
+  }
+}
+
+/** Base OTLP/HTTP: http(s) sin usuario, query ni fragmento (la ruta /v1/traces la agrega el exportador). */
+export function esEndpointOtlpValido(valor: unknown): boolean {
+  if (typeof valor !== 'string') return false;
+  try {
+    const url = new URL(valor);
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      url.username === '' &&
+      url.password === '' &&
+      url.search === '' &&
+      url.hash === ''
+    );
+  } catch {
+    return false;
+  }
+}
+
+@ValidatorConstraint({ name: 'endpointOtlpValido' })
+class EndpointOtlpValido implements ValidatorConstraintInterface {
+  validate(valor: unknown): boolean {
+    return esEndpointOtlpValido(valor);
+  }
+
+  defaultMessage(): string {
+    return (
+      'OTEL_EXPORTER_OTLP_ENDPOINT debe ser la base OTLP/HTTP, como http://jaeger:4318 ' +
+      '(http o https, sin usuario ni query)'
     );
   }
 }
@@ -195,6 +234,37 @@ export class VariablesEntorno {
   @IsInt({ message: 'RATE_LIMIT_FLIGHT_STATUS_MAX debe ser un número entero' })
   @IsOptional()
   RATE_LIMIT_FLIGHT_STATUS_MAX?: number;
+
+  /** `service.name` de las trazas y las métricas. Sin valor: quinde-bff. */
+  @Matches(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, {
+    message: 'OTEL_SERVICE_NAME debe tener de 1 a 64 letras, dígitos, punto, guion o guion bajo',
+  })
+  @IsOptional()
+  OTEL_SERVICE_NAME?: string;
+
+  /** Base OTLP/HTTP del recolector (http://jaeger:4318). Sin valor, las trazas no se exportan. */
+  @Validate(EndpointOtlpValido)
+  @IsOptional()
+  OTEL_EXPORTER_OTLP_ENDPOINT?: string;
+
+  /** Fracción de trazas raíz que se registran, de 0 a 1. Sin valor: 1 en desarrollo, 0.1 en production. */
+  @Max(1, { message: 'OTEL_TRACES_SAMPLER_ARG debe estar entre 0 y 1' })
+  @Min(0, { message: 'OTEL_TRACES_SAMPLER_ARG debe estar entre 0 y 1' })
+  @IsNumber({}, { message: 'OTEL_TRACES_SAMPLER_ARG debe ser un número entre 0 y 1' })
+  @IsOptional()
+  OTEL_TRACES_SAMPLER_ARG?: number;
+
+  /** Continuar el `traceparent` entrante: al BFF solo lo llama el gateway. Sin valor: true. */
+  @IsIn(['true', 'false'], { message: 'TRACE_TRUST_INCOMING debe ser true o false' })
+  @IsOptional()
+  TRACE_TRUST_INCOMING?: string;
+
+  /** Puerto aparte de `/metrics`; 0 lo apaga. Sin valor: 9464 (9465 para correr los cinco en una máquina). */
+  @Max(65535, { message: 'METRICS_PORT debe estar entre 0 y 65535 (0 lo apaga)' })
+  @Min(0, { message: 'METRICS_PORT debe estar entre 0 y 65535 (0 lo apaga)' })
+  @IsInt({ message: 'METRICS_PORT debe ser un número entero' })
+  @IsOptional()
+  METRICS_PORT?: number;
 }
 
 /** Límites de peticiones por IP y ventana: uno global y uno por operación raíz. */
@@ -221,12 +291,50 @@ export interface Configuracion {
   /** Introspección del esquema y landing del sandbox. */
   introspeccion: boolean;
   limites: LimitesConfiguracion;
+  observabilidad: ObservabilidadConfiguracion;
+}
+
+/** Lo que fijan las variables OTEL_*, TRACE_TRUST_INCOMING y METRICS_PORT. */
+export interface ObservabilidadConfiguracion {
+  /** `service.name`. */
+  servicio: string;
+  /** `service.version`: la de package.json. */
+  version: string;
+  /** Base OTLP/HTTP, sin barra final. Sin ella no se exporta nada (igual hay trace-id y propagación). */
+  endpointOtlp?: string;
+  muestreo: number;
+  confiarEntrante: boolean;
+  /** Puerto aparte de `/metrics`; 0 lo apaga. */
+  puertoMetricas: number;
 }
 
 export const CONFIGURACION = Symbol('CONFIGURACION');
 
+/** Una variable vacía (`OTEL_EXPORTER_OTLP_ENDPOINT=`) es una variable sin definir. */
+const VARIABLES_QUE_VACIAS_SE_IGNORAN = [
+  'OTEL_SERVICE_NAME',
+  'OTEL_EXPORTER_OTLP_ENDPOINT',
+  'OTEL_TRACES_SAMPLER_ARG',
+  'TRACE_TRUST_INCOMING',
+  'METRICS_PORT',
+];
+
+/** `service.version`: la de package.json, que está dos niveles arriba tanto en src/ como en dist/. */
+function versionDelPaquete(): string {
+  try {
+    const paquete = JSON.parse(readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8'));
+    return typeof paquete.version === 'string' ? paquete.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
 /** Valida `process.env` (o el objeto que se pase); si algo falta o es inválido, lanza. */
-export function validarEntorno(entorno: Record<string, unknown>): Configuracion {
+export function validarEntorno(entornoCrudo: Record<string, unknown>): Configuracion {
+  const entorno = { ...entornoCrudo };
+  for (const nombre of VARIABLES_QUE_VACIAS_SE_IGNORAN) {
+    if (entorno[nombre] === '') delete entorno[nombre];
+  }
   const variables = plainToInstance(VariablesEntorno, entorno, { enableImplicitConversion: true });
   const errores = validateSync(variables, { stopAtFirstError: true });
 
@@ -237,10 +345,17 @@ export function validarEntorno(entorno: Record<string, unknown>): Configuracion 
       .join('\n');
     throw new Error(`Variables de entorno inválidas o faltantes:\n${detalle}`);
   }
+  const puerto = variables.PORT ?? PUERTO_POR_DEFECTO;
+  const puertoMetricas = variables.METRICS_PORT ?? PUERTO_METRICAS_POR_DEFECTO;
+  if (puertoMetricas !== 0 && puertoMetricas === puerto) {
+    throw new Error(
+      'Variables de entorno inválidas o faltantes:\n  - METRICS_PORT: METRICS_PORT debe ser distinto de PORT',
+    );
+  }
 
   const enProduccion = variables.NODE_ENV === 'production';
   return {
-    puerto: variables.PORT ?? PUERTO_POR_DEFECTO,
+    puerto,
     entorno: variables.NODE_ENV,
     transporte: variables.CORE_TRANSPORT,
     grpcUrl: variables.CORE_GRPC_URL ?? GRPC_URL_POR_DEFECTO,
@@ -261,6 +376,16 @@ export function validarEntorno(entorno: Record<string, unknown>): Configuracion 
       searchFlights: variables.RATE_LIMIT_SEARCH_MAX ?? LIMITE_BUSQUEDA_POR_DEFECTO,
       seatMap: variables.RATE_LIMIT_SEATMAP_MAX ?? LIMITE_MAPA_ASIENTOS_POR_DEFECTO,
       flightStatus: variables.RATE_LIMIT_FLIGHT_STATUS_MAX ?? LIMITE_ESTADO_VUELO_POR_DEFECTO,
+    },
+    observabilidad: {
+      servicio: variables.OTEL_SERVICE_NAME ?? SERVICIO_POR_DEFECTO,
+      version: versionDelPaquete(),
+      endpointOtlp: variables.OTEL_EXPORTER_OTLP_ENDPOINT?.replace(/\/+$/, ''),
+      muestreo:
+        variables.OTEL_TRACES_SAMPLER_ARG ??
+        (enProduccion ? MUESTREO_PRODUCCION : MUESTREO_DESARROLLO),
+      confiarEntrante: variables.TRACE_TRUST_INCOMING !== 'false',
+      puertoMetricas,
     },
   };
 }
