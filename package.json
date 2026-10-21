@@ -11,14 +11,15 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "prepare": "husky || true",
-    "proto:sync": "node scripts/proto-sync.cjs",
     "proto:check": "node scripts/proto-check.cjs",
+    "proto:sync": "node scripts/proto-sync.cjs",
     "schema:breaking": "bash scripts/schema-breaking.sh",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
     "test": "jest --runInBand",
-    "test:cov": "jest --runInBand --coverage"
+    "test:cov": "jest --runInBand --coverage",
+    "test:mutaciones": "node scripts/mutaciones.mjs"
   },
   "engines": {
     "node": ">=20.19"
