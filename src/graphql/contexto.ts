@@ -1,8 +1,10 @@
+import { trace } from '@opentelemetry/api';
 import { Request, Response } from 'express';
 import { Configuracion } from '../config/entorno';
 import { esHuellaValida } from '../common/huella';
 import { NucleoVuelos } from '../nucleo/nucleo-vuelos';
 import { ClienteNucleo } from './cliente-nucleo';
+import { observacionDe } from '../telemetria/observacion';
 import { datosAccesoDe, requestIdDe } from './trazabilidad';
 
 /**
@@ -32,7 +34,19 @@ export function crearContexto(
   const requestId = requestIdDe(res);
   const cabecera = req.headers['x-device-fingerprint'];
   const huella = cabecera === undefined ? undefined : esHuellaValida(cabecera) ? cabecera : null;
-  const cliente = new ClienteNucleo(nucleo, configuracion, requestId, huella ?? undefined);
+  // Cada llamada al core cuelga del span de la operación (que se abre al resolverla, después de
+  // crear este contexto), por eso se calcula al llamar
+  const traza = () => {
+    const observacion = observacionDe(res);
+    if (!observacion) return undefined;
+    return {
+      padre: observacion.operacion
+        ? trace.setSpan(observacion.contexto, observacion.operacion)
+        : observacion.contexto,
+      tracestate: observacion.tracestate,
+    };
+  };
+  const cliente = new ClienteNucleo(nucleo, configuracion, requestId, huella ?? undefined, traza);
   datosAccesoDe(res).llamadasAlNucleo = () => cliente.totalLlamadas;
   return { req, res, requestId, huella, nucleo: cliente };
 }

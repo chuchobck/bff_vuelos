@@ -194,6 +194,56 @@ introspección y sandbox apagados en `production` salvo `GRAPHQL_INTROSPECTION=t
 (100 por minuto en total y 20/60/60 por operación). Un alias repetido cuenta como una operación más:
 `a: seatMap(...) b: seatMap(...)` son dos.
 
+## Observabilidad
+
+El BFF sigue el estándar de observabilidad de Quinde (fase 7a, `docs/OBSERVABILIDAD.md` del
+gateway): trazas W3C, métricas Prometheus y logs JSON. El gateway abre la traza y la manda en
+`traceparent`; el BFF la continúa (`TRACE_TRUST_INCOMING=true`: solo lo llama el gateway) y la pasa
+al core.
+
+**Spans** (siempre hay trace-id y propagación; los spans solo se exportan con
+`OTEL_EXPORTER_OTLP_ENDPOINT`):
+
+```text
+POST /graphql                                         SERVER    (hijo del span del gateway)
+└─ graphql query searchFlights                        INTERNAL  graphql.operation.type, graphql.root_fields
+   ├─ quinde.flights.v1.FlightsService/SearchFlights  CLIENT    rpc.system=grpc, rpc.method, rpc.grpc.status_code
+   ├─ quinde.flights.v1.FlightsService/GetSeatMap     CLIENT    (uno por segmento DISTINTO: el DataLoader junta los iguales)
+   └─ quinde.flights.v1.FlightsService/GetSeatMap     CLIENT
+```
+
+- Nunca llevan el texto de la consulta, las variables, los argumentos, un alias, el
+  `operationName`, un `offerId`, la huella ni una IP. `graphql.root_fields` lista solo los campos raíz
+  **del esquema** (`searchFlights,seatMap`); cualquier otro nombre es `__other__`.
+- Un error del cliente (`NOT_FOUND`, `BAD_USER_INPUT`...) no marca el span; uno del servicio
+  (`GATEWAY_TIMEOUT` → `error.type=timeout`, `SERVICE_UNAVAILABLE` → `unavailable`, `INTERNAL_SERVER_ERROR`
+  → `500`) sí, siempre sin el mensaje.
+- El core recibe en la metadata `traceparent` un valor **nuevo** (mismo trace-id, parent = el span CLIENT
+  de esa llamada) junto a `x-request-id`; con REST, la cabecera `traceparent`. Se propaga aunque no haya
+  exportador y aunque la traza no se muestree (bit `00`). `tracestate` pasa intacto si el gateway lo mandó y
+  cabe en el tope de W3C.
+- La respuesta lleva `X-Trace-Id` (el trace-id); `requestId`, `traceId` y `spanId` van en cada línea de
+  log.
+
+**Métricas**, en `METRICS_PORT` (aparte del puerto público; el ingress no lo expone), solo `GET /metrics`:
+
+| Métrica                                                              | Etiquetas                                                                                                                                                                          | Qué mide                                                                                  |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `http_server_request_duration_seconds`, `http_server_requests_total` | `method`, `route` (`/graphql`, `/health`, `/health/ready` o `__unmatched__`), `status`                                                                                             | Peticiones HTTP atendidas                                                                 |
+| `http_client_request_duration_seconds`                               | `upstream="core"`, `method` = la RPC (`SearchFlights`, `GetSeatMap`, `GetFlightStatus`), `status` = el código gRPC (`0` OK, `5` NOT_FOUND, `14` UNAVAILABLE...) o el HTTP con REST | Cada llamada real al core                                                                 |
+| `graphql_root_fields_total`                                          | `field`: `searchFlights`, `seatMap`, `flightStatus` o `__other__`                                                                                                                  | Campos raíz ejecutados                                                                    |
+| `graphql_errors_total`                                               | `code`: uno de la lista del apartado Errores o `__other__`                                                                                                                         | Errores devueltos                                                                         |
+| `bff_core_calls_per_query`                                           | (histograma, cubetas 0 a 100)                                                                                                                                                      | Cuántas llamadas al core hizo cada consulta; sirve para el análisis de latencia (fase 7d) |
+| `quinde_build_info`, `process_*`, `nodejs_*`                         |                                                                                                                                                                                    | Estándar                                                                                  |
+
+Cubetas de duración: las del estándar (5 ms a 60 s). Ninguna etiqueta toma un valor del cliente: mil
+nombres de operación, alias, campos o rutas inventados son las mismas series.
+
+Probar: `npm test` (`test/trazas.spec.ts`, `spans-graphql.spec.ts`, `propagacion-core.spec.ts` y
+`escaneo-observabilidad.spec.ts`, con un core gRPC falso y un recolector OTLP falso) y
+`npm run test:mutaciones` (rompe a propósito la propagación, la plantilla de ruta, las etiquetas y
+el puerto de `/metrics`, y exige que una prueba falle).
+
 ## Dónde GraphQL NO conviene (y se queda REST)
 
 Todo lo que no es una lectura pública se queda por **REST directo al core** (contrato OpenAPI

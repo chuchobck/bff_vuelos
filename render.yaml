@@ -25,6 +25,15 @@ services:
       # Render pone un proxy delante: con 1 la IP del cliente sale de X-Forwarded-For
       - key: TRUST_PROXY
         value: '1'
+      # Observabilidad (docs/OBSERVABILIDAD.md del gateway). En un contenedor, el puerto de métricas es
+      # el 9464 y el ingress de Render nunca lo expone. Para exportar trazas, agrega
+      # OTEL_EXPORTER_OTLP_ENDPOINT en el panel (docs/DEPLOY.md).
+      - key: OTEL_SERVICE_NAME
+        value: quinde-bff
+      - key: TRACE_TRUST_INCOMING
+        value: 'true'
+      - key: METRICS_PORT
+        value: '9464'
       # Orígenes del marketplace separados por coma (https://app.example.com), o vacía
       - key: CORS_ORIGINS
         sync: false

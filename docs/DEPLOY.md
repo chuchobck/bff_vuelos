@@ -50,6 +50,11 @@ Si falta una obligatoria o una es inválida, el BFF **no arranca** y el error no
 | `RATE_LIMIT_SEARCH_MAX`          | no          | `20`                                              | `searchFlights` por IP y ventana                                                                                  |
 | `RATE_LIMIT_SEATMAP_MAX`         | no          | `60`                                              | `seatMap` por IP y ventana                                                                                        |
 | `RATE_LIMIT_FLIGHT_STATUS_MAX`   | no          | `60`                                              | `flightStatus` por IP y ventana                                                                                   |
+| `OTEL_SERVICE_NAME`              | no          | `quinde-bff`                                      | `service.name` de trazas y métricas                                                                               |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`    | no          | (vacía: no se exporta)                            | Base OTLP/HTTP del recolector (`http://jaeger:4318`); sin credenciales ni query                                   |
+| `OTEL_TRACES_SAMPLER_ARG`        | no          | `1` fuera de production, `0.1` en production      | Fracción de trazas raíz que se registran (0 a 1)                                                                  |
+| `TRACE_TRUST_INCOMING`           | no          | `true`                                            | Continuar el `traceparent` que manda el gateway                                                                   |
+| `METRICS_PORT`                   | no          | `9464`                                            | Puerto aparte de `/metrics`; `0` lo apaga. Distinto de `PORT`                                                     |
 
 ### Planes gratuitos: el core y el BFF duermen
 
@@ -59,6 +64,16 @@ plazo de 8 s y responde `GATEWAY_TIMEOUT` (con `SERVICE_UNAVAILABLE` si el proxy
 antes); el reintento ya encuentra el core despierto. Para que la primera consulta espere el
 arranque, sube el plazo en el panel del servicio: `CORE_TIMEOUT_MS=45000`. La contrapartida: una
 consulta puede quedar colgada hasta ese plazo si el core no responde.
+
+### Observabilidad
+
+El BFF sigue el estándar de observabilidad del gateway (fase 7a): el SDK de trazas siempre
+arranca, así que cada petición tiene un trace-id (`X-Trace-Id` en la respuesta, `traceId` y
+`spanId` en los logs y `traceparent` hacia el core) aunque no se exporte nada. Los spans se
+exportan solo si defines `OTEL_EXPORTER_OTLP_ENDPOINT`. `/metrics` está en `METRICS_PORT`, **aparte
+del puerto público**: no es alcanzable por la URL del servicio y el ingress no debe publicarlo (en
+Render, un servicio web solo publica `PORT`). Prometheus lo raspa por la red interna. Detalle en
+[GRAPHQL.md](GRAPHQL.md#observabilidad).
 
 ## 3. Verificar el despliegue
 

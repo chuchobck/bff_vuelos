@@ -27,8 +27,14 @@ export default tseslint.config(
     rules: { '@typescript-eslint/no-explicit-any': 'off' },
   },
   {
+    // Transformador de Jest: CommonJS sin compilar
+    files: ['test/utils/*.js', 'jest.config.js'],
+    languageOptions: { sourceType: 'commonjs' },
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
     // Herramientas de verificación (scripts/): CommonJS que informa por consola.
-    files: ['scripts/**/*.cjs'],
+    files: ['scripts/**/*.cjs', 'scripts/**/*.mjs'],
     languageOptions: { sourceType: 'commonjs' },
     rules: { '@typescript-eslint/no-require-imports': 'off', 'no-console': 'off' },
   },

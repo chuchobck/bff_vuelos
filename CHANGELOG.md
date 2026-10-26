@@ -4,6 +4,36 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 [SemVer](https://semver.org/lang/es/). El detalle de cada fase (decisiones, hallazgos y commits)
 está en [docs/PLAN.md](docs/PLAN.md).
 
+## [0.2.0] - 2026-10-21
+
+El BFF adopta el estándar de observabilidad que definió el gateway (fase 7b del Reto 2). Sin cambios
+en el esquema GraphQL ni en las respuestas; los logs pasan a ser una línea JSON.
+
+### Fase 7b · Observabilidad
+
+- **Módulo del estándar:** `src/observabilidad/{traceparent,atributos,trazas,metricas}.ts` copiados
+  tal cual del gateway, con las mismas dependencias (`@opentelemetry/api`, `sdk-trace-node`,
+  `exporter-trace-otlp-http`, `resources` y `prom-client`) y sin instrumentaciones automáticas.
+- **Variables:** `OTEL_SERVICE_NAME` (`quinde-bff`), `OTEL_EXPORTER_OTLP_ENDPOINT` (opcional),
+  `OTEL_TRACES_SAMPLER_ARG` (1 en desarrollo, 0.1 en production), `TRACE_TRUST_INCOMING` (`true`) y
+  `METRICS_PORT` (9464; 0 lo apaga), validadas al arrancar sin mostrar su valor.
+- **Spans:** SERVER por petición (`POST /graphql`, hijo del `traceparent` del gateway), INTERNAL por
+  operación GraphQL (tipo y nombres de los campos raíz del esquema) y CLIENT por cada llamada real al
+  core, después del DataLoader (`rpc.system`, `rpc.service`, `rpc.method`, `rpc.grpc.status_code`).
+- **Propagación al core:** `traceparent` nuevo (mismo trace-id, parent = el span CLIENT) en la metadata
+  gRPC, o en la cabecera con REST, junto a `x-request-id`; `tracestate` intacto si cabe. Se propaga
+  aunque no haya exportador o la traza no se muestree.
+- **Logs y respuesta:** JSON con `requestId`, `traceId` y `spanId` en cada línea; `X-Trace-Id` en la
+  respuesta (también en los errores de CORS y del parser) y expuesta por CORS.
+- **Métricas** en `METRICS_PORT`, aparte del puerto público: las comunes del estándar,
+  `http_client_request_duration_seconds{upstream="core"}` con la RPC y el código gRPC, y las propias
+  `graphql_root_fields_total{field}`, `graphql_errors_total{code}` y `bff_core_calls_per_query`.
+- **Prohibido y probado:** ni el texto de la consulta, las variables, un `offerId`, la huella ni una IP
+  salen en un span, un log o una métrica; mil nombres de operación, alias o rutas inventados no crean
+  series nuevas.
+- **Pruebas:** `test/trazas.spec.ts`, `spans-graphql.spec.ts`, `propagacion-core.spec.ts` y
+  `escaneo-observabilidad.spec.ts`, con un recolector OTLP falso, y `npm run test:mutaciones`.
+
 ## [0.1.0] - 2026-10-15
 
 Primera versión: el BFF GraphQL de la fase R2-2. Resuelve las tres lecturas públicas del core de

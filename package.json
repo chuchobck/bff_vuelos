@@ -1,6 +1,6 @@
 {
   "name": "quinde-vuelos-bff",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Quinde · BFF GraphQL de Vuelos: agrega las tres lecturas públicas del core (búsqueda, mapa de asientos y estado de vuelo) sobre gRPC, con REST de respaldo",
   "private": true,
   "license": "UNLICENSED",
@@ -11,14 +11,15 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "prepare": "husky || true",
-    "proto:sync": "node scripts/proto-sync.cjs",
     "proto:check": "node scripts/proto-check.cjs",
+    "proto:sync": "node scripts/proto-sync.cjs",
     "schema:breaking": "bash scripts/schema-breaking.sh",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
     "test": "jest --runInBand",
-    "test:cov": "jest --runInBand --coverage"
+    "test:cov": "jest --runInBand --coverage",
+    "test:mutaciones": "node scripts/mutaciones.mjs"
   },
   "engines": {
     "node": ">=20.19"
@@ -33,12 +34,17 @@
     "@nestjs/graphql": "^12.2.2",
     "@nestjs/microservices": "^10.4.22",
     "@nestjs/platform-express": "^10.4.22",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.223.0",
+    "@opentelemetry/resources": "^2.12.0",
+    "@opentelemetry/sdk-trace-node": "^2.12.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",
     "dataloader": "^2.2.3",
     "express": "^4.22.3",
     "graphql": "^16.14.2",
     "helmet": "^8.3.0",
+    "prom-client": "^15.1.3",
     "reflect-metadata": "^0.1.14",
     "rxjs": "^7.8.2"
   },

@@ -68,6 +68,11 @@ invalidParams? }`, sin stack ni mensajes internos del core.
 - **Trazabilidad:** `X-Request-Id` (el del cliente si es válido) viaja al core, a la respuesta, a
   los errores y al log de acceso. `X-Device-Fingerprint` es obligatoria en `searchFlights` y nunca
   sale en un log ni en un error.
+- **Observabilidad** (estándar de Quinde, fase 7b): trazas W3C que continúan la del gateway, con un span
+  por petición, uno por operación GraphQL y uno por llamada real al core (que recibe un `traceparent`
+  nuevo); `X-Trace-Id` en la respuesta; logs JSON con `traceId` y `spanId`; y métricas Prometheus en un
+  puerto aparte (`METRICS_PORT`). Nunca el texto de la consulta, las variables, un `offerId`, la huella
+  ni una IP. Ver [docs/GRAPHQL.md](docs/GRAPHQL.md#observabilidad).
 - **Protecciones** (el core no limita peticiones en gRPC): límite por IP y por operación,
   profundidad máxima 8, tope de llamadas al core por consulta, sin lotes, cuerpo de hasta 100 kB,
   helmet, CORS por lista y sin introspección en `production`.
@@ -91,6 +96,8 @@ invalidParams? }`, sin stack ni mensajes internos del core.
 src/
   config/       entorno validado, CORS, proxy
   common/       Reloj, request id, huella, contexto asíncrono
+  observabilidad/ copia tal cual del módulo de trazas y métricas del gateway (estándar de Quinde)
+  telemetria/   middleware, spans de GraphQL y del core, métricas propias y logger JSON del BFF
   nucleo/       puerto NucleoVuelos, modelo, ErrorNucleo, Normalizador y los adaptadores grpc/ y rest/
   graphql/      schema.graphql, resolvers, escalares, contexto, errores, plugins y protecciones
   limites/      limitador de peticiones (ventana deslizante con Reloj)

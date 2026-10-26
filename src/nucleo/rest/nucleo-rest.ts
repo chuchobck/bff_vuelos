@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Configuracion, CONFIGURACION } from '../../config/entorno';
 import {
   CategoriaError,
@@ -8,6 +8,8 @@ import {
   leerRetryAfter,
 } from '../error-nucleo';
 import { EntradaBusqueda, EstadoVueloDetalle, MapaAsientos, ResultadoBusqueda } from '../modelo';
+import { LlamadaCore, RpcDelCore } from '../../telemetria/llamada-core';
+import { Observabilidad, OBSERVABILIDAD } from '../../telemetria/observabilidad';
 import { NORMALIZADOR_REST } from '../normalizacion';
 import { ContextoLlamada, NucleoVuelos, SondaNucleo } from '../nucleo-vuelos';
 
@@ -26,7 +28,10 @@ const ESPERA_SALUD_MAXIMA_MS = 3000;
 export class NucleoRest implements NucleoVuelos, SondaNucleo {
   private readonly base: string;
 
-  constructor(@Inject(CONFIGURACION) private readonly configuracion: Configuracion) {
+  constructor(
+    @Inject(CONFIGURACION) private readonly configuracion: Configuracion,
+    @Optional() @Inject(OBSERVABILIDAD) private readonly observabilidad?: Observabilidad,
+  ) {
     if (!configuracion.restUrl)
       throw new Error('CORE_REST_URL es obligatoria con CORE_TRANSPORT=rest');
     this.base = `${configuracion.restUrl}${PREFIJO_REST}`;
@@ -39,7 +44,7 @@ export class NucleoRest implements NucleoVuelos, SondaNucleo {
     const cabeceras = this.cabeceras(contexto);
     if (contexto.huella !== undefined) cabeceras['X-Device-Fingerprint'] = contexto.huella;
     cabeceras['Content-Type'] = 'application/json';
-    const crudo = await this.pedir('/search', {
+    const crudo = await this.pedir('SearchFlights', contexto, '/search', {
       method: 'POST',
       headers: cabeceras,
       body: JSON.stringify({
@@ -56,6 +61,8 @@ export class NucleoRest implements NucleoVuelos, SondaNucleo {
     contexto: ContextoLlamada,
   ): Promise<MapaAsientos> {
     const crudo = await this.pedir(
+      'GetSeatMap',
+      contexto,
       `/offers/${encodeURIComponent(offerId)}/seatmap?segmentId=${encodeURIComponent(segmentId)}`,
       { method: 'GET', headers: this.cabeceras(contexto) },
     );
@@ -68,6 +75,8 @@ export class NucleoRest implements NucleoVuelos, SondaNucleo {
     contexto: ContextoLlamada,
   ): Promise<EstadoVueloDetalle> {
     const crudo = await this.pedir(
+      'GetFlightStatus',
+      contexto,
       `/flights/${encodeURIComponent(flightNumber)}/status?date=${encodeURIComponent(date)}`,
       { method: 'GET', headers: this.cabeceras(contexto) },
     );
@@ -93,15 +102,34 @@ export class NucleoRest implements NucleoVuelos, SondaNucleo {
     return { Accept: 'application/json', 'X-Request-Id': contexto.requestId };
   }
 
-  private async pedir(ruta: string, opciones: RequestInit): Promise<unknown> {
+  private async pedir(
+    rpc: RpcDelCore,
+    contexto: ContextoLlamada,
+    ruta: string,
+    opciones: RequestInit,
+  ): Promise<unknown> {
+    // Un span CLIENT por llamada real, y un traceparent NUEVO en la cabecera (mismo trace-id,
+    // parent = ese span); el tracestate del gateway pasa intacto si venía
+    const llamada = LlamadaCore.abrir(
+      this.observabilidad,
+      'rest',
+      rpc,
+      contexto.traza,
+      contexto.requestId,
+    );
+    const cabeceras: Record<string, string> = { ...(opciones.headers as Record<string, string>) };
+    if (llamada.traceparent) cabeceras.traceparent = llamada.traceparent;
+    if (llamada.tracestate) cabeceras.tracestate = llamada.tracestate;
     try {
       // El plazo cubre la respuesta completa: cabeceras y cuerpo
       const respuesta = await fetch(`${this.base}${ruta}`, {
         ...opciones,
+        headers: cabeceras,
         redirect: 'error',
         signal: AbortSignal.timeout(this.configuracion.timeoutMs),
       });
       const texto = await respuesta.text();
+      llamada.terminar(respuesta.status);
       if (!respuesta.ok) throw aErrorNucleo(respuesta, texto);
       try {
         return JSON.parse(texto);
@@ -114,7 +142,13 @@ export class NucleoRest implements NucleoVuelos, SondaNucleo {
       }
     } catch (error) {
       if (error instanceof ErrorNucleo) throw error;
-      throw aErrorDeRed(error);
+      const errorDeRed = aErrorDeRed(error);
+      // Sin respuesta: el plazo vencido es timeout; lo demás, unavailable
+      llamada.terminar(
+        undefined,
+        errorDeRed.categoria === 'DEADLINE_EXCEEDED' ? 'timeout' : 'unavailable',
+      );
+      throw errorDeRed;
     }
   }
 }

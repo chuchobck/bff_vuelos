@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import { observacionDe } from '../telemetria/observacion';
 import { requestIdDe } from './trazabilidad';
 
 /**
@@ -16,6 +17,8 @@ export function responderErrorGraphQL(
     retryAfter?: number;
   },
 ): void {
+  // Lo que se rechaza antes de Apollo también cuenta en graphql_errors_total
+  observacionDe(res)?.bff.error(error.code);
   if (error.retryAfter !== undefined) res.setHeader('Retry-After', String(error.retryAfter));
   res.status(status).json({
     errors: [

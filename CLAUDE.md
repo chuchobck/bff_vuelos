@@ -32,6 +32,9 @@ está en `docs/PLAN.md`; los cambios, en `CHANGELOG.md`.
 - `src/graphql/`: `schema.graphql` (la fuente del contrato GraphQL), resolvers, escalares, contexto
   por petición, errores y plugins de Apollo.
 - `src/limites/`: el limitador de peticiones. `src/salud/`: `/health` y `/health/ready`.
+- `src/observabilidad/`: copia **tal cual** (no se edita) de `traceparent`, `atributos`, `trazas` y
+  `metricas` del gateway (`gateway_vuelos`, `docs/OBSERVABILIDAD.md`: el estándar). `src/telemetria/`:
+  lo del BFF encima (middleware de Express, spans de GraphQL y del core, métricas propias, logger JSON).
 - `contracts/proto/flights/v1/flights.proto`: copia del proto del core. **No se edita a mano**:
   `npm run proto:sync` lo trae de `main` del core y `npm run proto:check` lo compara.
 
@@ -75,12 +78,33 @@ está en `docs/PLAN.md`; los cambios, en `CHANGELOG.md`.
 - Producción: introspección y landing del sandbox apagados salvo `GRAPHQL_INTROSPECTION=true`;
   profundidad máxima 8; sin consultas en lote; cuerpo máximo 100 kB.
 
+## Observabilidad
+
+- El estándar es el de `docs/OBSERVABILIDAD.md` del gateway y manda sobre este archivo si chocan. Un
+  cambio de los cuatro archivos de `src/observabilidad/` se hace en el gateway y se vuelve a copiar.
+- El middleware de `src/telemetria/middleware.ts` va PRIMERO en `configurar-app.ts`. El SDK de trazas
+  siempre arranca (hay trace-id, `X-Trace-Id` y `traceparent` hacia el core aunque no se exporte nada).
+- Spans: SERVER por petición, INTERNAL por operación GraphQL, CLIENT por cada llamada real al core
+  (después del DataLoader). Cada llamada manda al core un `traceparent` NUEVO junto a `x-request-id`.
+- **Prohibido en spans, logs y métricas:** texto de la consulta, variables, argumentos, alias,
+  `offerId`, `X-Device-Fingerprint` e IPs. El nombre de la operación del cliente no va ni a un span ni
+  a una etiqueta (solo el log de acceso, ya validado como identificador GraphQL).
+- Etiquetas y atributos solo con valores de conjuntos cerrados: la plantilla de ruta (`/graphql`,
+  `/health`, `/health/ready`, `__unmatched__`), los campos raíz del esquema (o `__other__`), los `code`
+  de error conocidos (o `__other__`) y las tres RPC del core. Nunca un texto del cliente.
+- `/metrics` solo en `METRICS_PORT`, nunca en el puerto público. `METRICS_PORT` no puede ser `PORT`.
+- Un atributo de span nuevo se agrega a `atributos-bff.ts` con su conjunto cerrado de valores.
+
 ## Pruebas
 
 - Jest + supertest. No hay core real: un servidor gRPC falso (construido desde el mismo proto) y un
   servidor HTTP falso (REST). Un solo juego de pruebas corre contra los dos adaptadores.
 - Las pruebas de límites pasan un `RelojDePrueba`; ninguna depende de `Date.now()` ni espera de más.
 - Una prueba nueva se comprueba rompiendo a propósito lo que cubre: si no falla, no prueba nada.
+  `npm run test:mutaciones` (`scripts/mutaciones.mjs`) lo hace para la observabilidad: una mutación
+  nueva va ahí con la prueba que debe detectarla.
+- Los spans se prueban con un recolector OTLP falso (`test/utils/recolector-otlp.ts`); el logger de
+  Nest es global, así que una prueba que lee `app.logs` crea su propio app.
 
 ## Git
 

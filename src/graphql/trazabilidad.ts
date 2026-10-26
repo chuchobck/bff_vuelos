@@ -1,7 +1,9 @@
+import { context } from '@opentelemetry/api';
 import { Logger } from '@nestjs/common';
 import { NextFunction, Request, Response } from 'express';
 import { contextoPeticion } from '../common/contexto-peticion';
 import { CABECERA_REQUEST_ID, resolverRequestId } from '../common/request-id';
+import { observacionDe } from '../telemetria/observacion';
 
 /**
  * Lo que el log de acceso necesita saber de la petición, y que el contexto GraphQL y los plugins
@@ -47,9 +49,11 @@ export function middlewareRequestId(req: Request, res: Response, next: NextFunct
 const logger = new Logger('Acceso');
 
 /**
- * Una línea de log por petición a /graphql, al terminar la respuesta: request id, estado,
- * operationName, duración y llamadas al core. Nada más: ni la huella, ni los argumentos, ni las
- * cabeceras ni el cuerpo.
+ * Una línea de log por petición a /graphql, al terminar la respuesta: método, plantilla de la ruta,
+ * estado, operationName (solo si es un nombre GraphQL), duración y llamadas al core. El requestId,
+ * el traceId y el spanId los pone el logger desde el contexto, que aquí se reabre a mano porque el
+ * evento 'finish' no corre en el de la petición. Nada más: ni la huella, ni los argumentos, ni las
+ * cabeceras, ni el cuerpo, ni la IP.
  */
 export function middlewareAcceso(req: Request, res: Response, next: NextFunction): void {
   const inicio = process.hrtime.bigint();
@@ -60,17 +64,33 @@ export function middlewareAcceso(req: Request, res: Response, next: NextFunction
     registrada = true;
     const ms = Number(process.hrtime.bigint() - inicio) / 1e6;
     const acceso = datosAccesoDe(res);
-    logger.log(
-      `${requestIdDe(res)} ${req.method} ${req.baseUrl} ${res.statusCode} ` +
-        `op=${acceso.operationName ?? '-'} ${ms.toFixed(1)}ms core=${acceso.llamadasAlNucleo()}`,
-    );
+    const linea = () =>
+      logger.log({
+        msg: 'acceso',
+        metodo: req.method,
+        ruta: req.baseUrl,
+        status: res.statusCode,
+        op: acceso.operationName ?? '-',
+        ms: Number(ms.toFixed(1)),
+        llamadasAlNucleo: acceso.llamadasAlNucleo(),
+      });
+    const observacion = observacionDe(res);
+    if (observacion) context.with(observacion.contexto, linea);
+    else linea();
   };
   res.once('finish', registrar);
   res.once('close', registrar);
   next();
 }
 
-/** Abre el contexto asíncrono con el request id; va después del parser del cuerpo. */
+/**
+ * Abre el contexto asíncrono con el request id; va después del parser del cuerpo, que perdería el
+ * contexto si se abriera antes. Aquí también se reabre el de las trazas (span SERVER activo): así
+ * Apollo, los resolvers y los logs de lo que sigue lo ven.
+ */
 export function middlewareContexto(_req: Request, res: Response, next: NextFunction): void {
-  contextoPeticion.run({ requestId: requestIdDe(res) }, next);
+  const abrir = () => contextoPeticion.run({ requestId: requestIdDe(res) }, next);
+  const observacion = observacionDe(res);
+  if (observacion) context.with(observacion.contexto, abrir);
+  else abrir();
 }

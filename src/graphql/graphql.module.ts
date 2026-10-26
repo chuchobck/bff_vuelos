@@ -13,6 +13,8 @@ import { EscalarFecha, EscalarInstante } from './escalares';
 import { formatearError } from './errores-graphql';
 import { PluginAcceso } from './plugin-acceso';
 import { PluginLimites } from './plugin-limites';
+import { PluginObservabilidad } from '../telemetria/plugin-observabilidad';
+import { Observabilidad, OBSERVABILIDAD } from '../telemetria/observabilidad';
 import { reglaProfundidadMaxima } from './profundidad';
 import { ConsultasResolver } from './resolvers/consultas.resolver';
 import { SegmentoResolver } from './resolvers/segmento.resolver';
@@ -33,11 +35,12 @@ export const RUTA_GRAPHQL = '/graphql';
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
       imports: [NucleoModule, LimitesModule],
-      inject: [CONFIGURACION, NUCLEO_VUELOS, LimitadorPeticiones],
+      inject: [CONFIGURACION, NUCLEO_VUELOS, LimitadorPeticiones, OBSERVABILIDAD],
       useFactory: (
         configuracion: Configuracion,
         nucleo: NucleoVuelos,
         limitador: LimitadorPeticiones,
+        observabilidad: Observabilidad,
       ): ApolloDriverConfig => ({
         typePaths: [join(__dirname, 'schema.graphql')],
         path: RUTA_GRAPHQL,
@@ -48,7 +51,12 @@ export const RUTA_GRAPHQL = '/graphql';
         allowBatchedHttpRequests: false,
         csrfPrevention: true,
         formatError: formatearError,
-        plugins: [new PluginAcceso(), new PluginLimites(limitador, configuracion)],
+        plugins: [
+          new PluginAcceso(),
+          // Antes del límite: el span de la operación cubre también lo que el límite rechaza
+          new PluginObservabilidad(observabilidad),
+          new PluginLimites(limitador, configuracion),
+        ],
         // Profundidad máxima 8 (ver profundidad.ts)
         validationRules: [reglaProfundidadMaxima()],
         // Un contexto nuevo por petición: request id, huella, llamadas al core y DataLoader
